@@ -189,6 +189,14 @@ async function startGateway() {
     console.log(`[gateway] Sync output: ${syncResult.output}`);
   }
 
+  // Allow Host-header origin fallback for Control UI behind Railway reverse proxy.
+  // Without this, non-loopback connections fail with "requires gateway.controlUi.allowedOrigins".
+  const originFallback = await runCmd(
+    OPENCLAW_NODE,
+    clawArgs(["config", "set", "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback", "true"]),
+  );
+  console.log(`[gateway] controlUi.dangerouslyAllowHostHeaderOriginFallback exit=${originFallback.code}`);
+
   const args = [
     "gateway",
     "run",
@@ -708,6 +716,17 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         ]),
       );
       extra += `[config] gateway.controlUi.allowInsecureAuth=true exit=${allowInsecureResult.code}\n`;
+
+      const originFallbackResult = await runCmd(
+        OPENCLAW_NODE,
+        clawArgs([
+          "config",
+          "set",
+          "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback",
+          "true",
+        ]),
+      );
+      extra += `[config] gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true exit=${originFallbackResult.code}\n`;
 
       const tokenResult = await runCmd(
         OPENCLAW_NODE,
