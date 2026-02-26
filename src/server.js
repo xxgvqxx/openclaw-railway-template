@@ -189,13 +189,20 @@ async function startGateway() {
     console.log(`[gateway] Sync output: ${syncResult.output}`);
   }
 
-  // Allow Host-header origin fallback for Control UI behind Railway reverse proxy.
+  // Patch openclaw.json directly to set Control UI origin fallback.
+  // The CLI `config set` may not handle deeply nested keys or boolean types correctly.
   // Without this, non-loopback connections fail with "requires gateway.controlUi.allowedOrigins".
-  const originFallback = await runCmd(
-    OPENCLAW_NODE,
-    clawArgs(["config", "set", "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback", "true"]),
-  );
-  console.log(`[gateway] controlUi.dangerouslyAllowHostHeaderOriginFallback exit=${originFallback.code}`);
+  try {
+    const cfgPath = configPath();
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    if (!cfg.gateway) cfg.gateway = {};
+    if (!cfg.gateway.controlUi) cfg.gateway.controlUi = {};
+    cfg.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true;
+    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: 0o600 });
+    console.log("[gateway] Patched controlUi.dangerouslyAllowHostHeaderOriginFallback=true in config");
+  } catch (err) {
+    console.warn(`[gateway] Failed to patch controlUi origin fallback: ${err.message}`);
+  }
 
   const args = [
     "gateway",
@@ -717,16 +724,18 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       );
       extra += `[config] gateway.controlUi.allowInsecureAuth=true exit=${allowInsecureResult.code}\n`;
 
-      const originFallbackResult = await runCmd(
-        OPENCLAW_NODE,
-        clawArgs([
-          "config",
-          "set",
-          "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback",
-          "true",
-        ]),
-      );
-      extra += `[config] gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true exit=${originFallbackResult.code}\n`;
+      // Patch config JSON directly for origin fallback (CLI may not handle nested booleans)
+      try {
+        const cfgPath = configPath();
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+        if (!cfg.gateway) cfg.gateway = {};
+        if (!cfg.gateway.controlUi) cfg.gateway.controlUi = {};
+        cfg.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true;
+        fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: 0o600 });
+        extra += "[config] gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true (patched JSON)\n";
+      } catch (err) {
+        extra += `[config] WARNING: failed to patch origin fallback: ${err.message}\n`;
+      }
 
       const tokenResult = await runCmd(
         OPENCLAW_NODE,
