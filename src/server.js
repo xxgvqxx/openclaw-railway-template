@@ -194,10 +194,12 @@ async function startGateway() {
   // explicit allowedOrigins (primary defense), and the fallback flag (safety net).
   try {
     const cfgPath = configPath();
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    console.error(`[gateway] Patching config at: ${cfgPath}`);
+    const raw = fs.readFileSync(cfgPath, "utf8");
+    const cfg = JSON.parse(raw);
     if (!cfg.gateway) cfg.gateway = {};
 
-    // Force loopback bind in config — CLI flag alone is unreliable (config may override it)
+    // Force loopback bind in config
     cfg.gateway.bind = "loopback";
 
     if (!cfg.gateway.controlUi) cfg.gateway.controlUi = {};
@@ -208,9 +210,12 @@ async function startGateway() {
     cfg.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true;
 
     fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: 0o600 });
-    console.log("[gateway] Patched config: bind=loopback, allowedOrigins, originFallback=true");
+
+    // Verify write by reading back
+    const verify = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    console.error(`[gateway] Config patched OK — bind=${verify.gateway?.bind}, allowedOrigins=${JSON.stringify(verify.gateway?.controlUi?.allowedOrigins)}, fallback=${verify.gateway?.controlUi?.dangerouslyAllowHostHeaderOriginFallback}`);
   } catch (err) {
-    console.warn(`[gateway] Failed to patch config: ${err.message}`);
+    console.error(`[gateway] FAILED to patch config: ${err.message}`);
   }
 
   const args = [
@@ -218,6 +223,8 @@ async function startGateway() {
     "run",
     "--bind",
     "loopback",
+    "--host",
+    "127.0.0.1",
     "--port",
     String(INTERNAL_GATEWAY_PORT),
     "--auth",
@@ -239,10 +246,10 @@ async function startGateway() {
   const safeArgs = args.map((arg, i) =>
     args[i - 1] === "--token" ? "[REDACTED]" : arg
   );
-  console.log(
+  console.error(
     `[gateway] starting with command: ${OPENCLAW_NODE} ${clawArgs(safeArgs).join(" ")}`,
   );
-  console.log(`[gateway] STATE_DIR: ${STATE_DIR}`);
+  console.error(`[gateway] STATE_DIR: ${STATE_DIR}`);
   console.log(`[gateway] WORKSPACE_DIR: ${WORKSPACE_DIR}`);
   console.log(`[gateway] config path: ${configPath()}`);
 
