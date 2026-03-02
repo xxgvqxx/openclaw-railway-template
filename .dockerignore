@@ -1,0 +1,7 @@
+._*
+.DS_Store
+.claude/
+.serena/
+.tmpdata/
+node_modules/
+*.tar.gz

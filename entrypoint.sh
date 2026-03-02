@@ -25,5 +25,18 @@ else
   fi
 fi
 
-echo "[entrypoint] Starting wrapper (deploy marker v3)" >&2
+# Ensure OpenClaw's HOME-based config path points to the Railway volume.
+# The gateway resolves config from ~/.openclaw/openclaw.json (HOME-based),
+# NOT from OPENCLAW_STATE_DIR. Without this symlink, config patches are
+# written to /data/.openclaw/ but the gateway reads from /home/openclaw/.openclaw/.
+OPENCLAW_HOME_DIR="/home/openclaw/.openclaw"
+OPENCLAW_DATA_DIR="${OPENCLAW_STATE_DIR:-/data/.openclaw}"
+if [ ! -L "$OPENCLAW_HOME_DIR" ] && [ "$OPENCLAW_HOME_DIR" != "$OPENCLAW_DATA_DIR" ]; then
+  mkdir -p "$(dirname "$OPENCLAW_HOME_DIR")"
+  rm -rf "$OPENCLAW_HOME_DIR"
+  ln -sf "$OPENCLAW_DATA_DIR" "$OPENCLAW_HOME_DIR"
+  echo "[entrypoint] Symlinked $OPENCLAW_HOME_DIR -> $OPENCLAW_DATA_DIR" >&2
+fi
+
+echo "[entrypoint] Starting wrapper (deploy marker v4)" >&2
 exec gosu openclaw node src/server.js
