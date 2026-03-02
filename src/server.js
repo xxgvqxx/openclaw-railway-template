@@ -189,33 +189,42 @@ async function startGateway() {
     console.log(`[gateway] Sync output: ${syncResult.output}`);
   }
 
-  // Patch openclaw.json directly before gateway spawn.
-  // Belt-and-suspenders: set bind=loopback (bypasses origin check entirely),
-  // explicit allowedOrigins (primary defense), and the fallback flag (safety net).
+  // Use openclaw's own config CLI with --json to set proper types.
+  // This ensures the gateway reads the values from its own config system.
+  const configSets = [
+    ["gateway.bind", '"loopback"'],
+    ["gateway.controlUi.enabled", "false"],
+    ["gateway.controlUi.allowedOrigins", JSON.stringify([
+      `http://127.0.0.1:${INTERNAL_GATEWAY_PORT}`,
+      `http://localhost:${INTERNAL_GATEWAY_PORT}`,
+    ])],
+    ["gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback", "true"],
+  ];
+  for (const [key, val] of configSets) {
+    const r = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", key, val]));
+    process.stderr.write(`[gateway] config set --json ${key} ${val} → exit=${r.code}\n`);
+  }
+
+  // Also patch the JSON file directly as a safety net
   try {
     const cfgPath = configPath();
-    console.error(`[gateway] Patching config at: ${cfgPath}`);
-    const raw = fs.readFileSync(cfgPath, "utf8");
-    const cfg = JSON.parse(raw);
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
     if (!cfg.gateway) cfg.gateway = {};
-
-    // Force loopback bind in config
     cfg.gateway.bind = "loopback";
-
     if (!cfg.gateway.controlUi) cfg.gateway.controlUi = {};
+    cfg.gateway.controlUi.enabled = false;
     cfg.gateway.controlUi.allowedOrigins = [
       `http://127.0.0.1:${INTERNAL_GATEWAY_PORT}`,
       `http://localhost:${INTERNAL_GATEWAY_PORT}`,
     ];
     cfg.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true;
-
     fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: 0o600 });
 
-    // Verify write by reading back
+    // Verify and log via raw stderr write (bypasses any buffering)
     const verify = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
-    console.error(`[gateway] Config patched OK — bind=${verify.gateway?.bind}, allowedOrigins=${JSON.stringify(verify.gateway?.controlUi?.allowedOrigins)}, fallback=${verify.gateway?.controlUi?.dangerouslyAllowHostHeaderOriginFallback}`);
+    process.stderr.write(`[gateway] Config verified: bind=${verify.gateway?.bind} controlUi.enabled=${verify.gateway?.controlUi?.enabled} origins=${JSON.stringify(verify.gateway?.controlUi?.allowedOrigins)} fallback=${verify.gateway?.controlUi?.dangerouslyAllowHostHeaderOriginFallback}\n`);
   } catch (err) {
-    console.error(`[gateway] FAILED to patch config: ${err.message}`);
+    process.stderr.write(`[gateway] FAILED to patch config: ${err.message}\n`);
   }
 
   const args = [
@@ -740,22 +749,38 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       );
       extra += `[config] gateway.controlUi.allowInsecureAuth=true exit=${allowInsecureResult.code}\n`;
 
-      // Patch config JSON directly for bind + origin settings
+      // Use openclaw config CLI with --json for proper types
+      const onboardConfigSets = [
+        ["gateway.bind", '"loopback"'],
+        ["gateway.controlUi.enabled", "false"],
+        ["gateway.controlUi.allowedOrigins", JSON.stringify([
+          `http://127.0.0.1:${INTERNAL_GATEWAY_PORT}`,
+          `http://localhost:${INTERNAL_GATEWAY_PORT}`,
+        ])],
+        ["gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback", "true"],
+      ];
+      for (const [key, val] of onboardConfigSets) {
+        const r = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", key, val]));
+        extra += `[config] ${key}=${val} exit=${r.code}\n`;
+      }
+
+      // Also patch JSON directly as safety net
       try {
         const cfgPath = configPath();
         const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
         if (!cfg.gateway) cfg.gateway = {};
         cfg.gateway.bind = "loopback";
         if (!cfg.gateway.controlUi) cfg.gateway.controlUi = {};
+        cfg.gateway.controlUi.enabled = false;
         cfg.gateway.controlUi.allowedOrigins = [
           `http://127.0.0.1:${INTERNAL_GATEWAY_PORT}`,
           `http://localhost:${INTERNAL_GATEWAY_PORT}`,
         ];
         cfg.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true;
         fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: 0o600 });
-        extra += "[config] bind=loopback, allowedOrigins, originFallback=true (patched JSON)\n";
+        extra += "[config] bind=loopback, controlUi.enabled=false, origins, fallback (patched JSON)\n";
       } catch (err) {
-        extra += `[config] WARNING: failed to patch bind/origins: ${err.message}\n`;
+        extra += `[config] WARNING: failed to patch config: ${err.message}\n`;
       }
 
       const tokenResult = await runCmd(

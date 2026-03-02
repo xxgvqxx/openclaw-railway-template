@@ -25,4 +25,5 @@ else
   fi
 fi
 
+echo "[entrypoint] Starting wrapper (deploy marker v3)" >&2
 exec gosu openclaw node src/server.js
