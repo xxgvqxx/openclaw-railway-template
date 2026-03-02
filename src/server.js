@@ -189,19 +189,28 @@ async function startGateway() {
     console.log(`[gateway] Sync output: ${syncResult.output}`);
   }
 
-  // Patch openclaw.json directly to set Control UI origin fallback.
-  // The CLI `config set` may not handle deeply nested keys or boolean types correctly.
-  // Without this, non-loopback connections fail with "requires gateway.controlUi.allowedOrigins".
+  // Patch openclaw.json directly before gateway spawn.
+  // Belt-and-suspenders: set bind=loopback (bypasses origin check entirely),
+  // explicit allowedOrigins (primary defense), and the fallback flag (safety net).
   try {
     const cfgPath = configPath();
     const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
     if (!cfg.gateway) cfg.gateway = {};
+
+    // Force loopback bind in config — CLI flag alone is unreliable (config may override it)
+    cfg.gateway.bind = "loopback";
+
     if (!cfg.gateway.controlUi) cfg.gateway.controlUi = {};
+    cfg.gateway.controlUi.allowedOrigins = [
+      `http://127.0.0.1:${INTERNAL_GATEWAY_PORT}`,
+      `http://localhost:${INTERNAL_GATEWAY_PORT}`,
+    ];
     cfg.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true;
+
     fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: 0o600 });
-    console.log("[gateway] Patched controlUi.dangerouslyAllowHostHeaderOriginFallback=true in config");
+    console.log("[gateway] Patched config: bind=loopback, allowedOrigins, originFallback=true");
   } catch (err) {
-    console.warn(`[gateway] Failed to patch controlUi origin fallback: ${err.message}`);
+    console.warn(`[gateway] Failed to patch config: ${err.message}`);
   }
 
   const args = [
@@ -724,17 +733,22 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       );
       extra += `[config] gateway.controlUi.allowInsecureAuth=true exit=${allowInsecureResult.code}\n`;
 
-      // Patch config JSON directly for origin fallback (CLI may not handle nested booleans)
+      // Patch config JSON directly for bind + origin settings
       try {
         const cfgPath = configPath();
         const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
         if (!cfg.gateway) cfg.gateway = {};
+        cfg.gateway.bind = "loopback";
         if (!cfg.gateway.controlUi) cfg.gateway.controlUi = {};
+        cfg.gateway.controlUi.allowedOrigins = [
+          `http://127.0.0.1:${INTERNAL_GATEWAY_PORT}`,
+          `http://localhost:${INTERNAL_GATEWAY_PORT}`,
+        ];
         cfg.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback = true;
         fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { encoding: "utf8", mode: 0o600 });
-        extra += "[config] gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true (patched JSON)\n";
+        extra += "[config] bind=loopback, allowedOrigins, originFallback=true (patched JSON)\n";
       } catch (err) {
-        extra += `[config] WARNING: failed to patch origin fallback: ${err.message}\n`;
+        extra += `[config] WARNING: failed to patch bind/origins: ${err.message}\n`;
       }
 
       const tokenResult = await runCmd(
