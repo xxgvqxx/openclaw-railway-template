@@ -1204,6 +1204,60 @@ app.post("/setup/api/pairing/approve", requireSetupAuth, async (req, res) => {
     .json({ ok: r.code === 0, output: r.output });
 });
 
+app.get("/setup/api/devices", requireSetupAuth, async (_req, res) => {
+  const result = await runCmd(
+    OPENCLAW_NODE,
+    clawArgs(["devices", "list", "--json", "--token", OPENCLAW_GATEWAY_TOKEN]),
+  );
+  const raw = result.output || "";
+
+  let data = null;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        data = JSON.parse(raw.slice(start, end + 1));
+      } catch {
+        data = null;
+      }
+    }
+  }
+
+  return res.json({
+    ok: result.code === 0 || Boolean(data),
+    data,
+    raw,
+  });
+});
+
+app.post("/setup/api/devices/approve", requireSetupAuth, async (req, res) => {
+  const { requestId } = req.body || {};
+  const args = ["devices", "approve"];
+
+  if (requestId) {
+    const trimmed = String(requestId).trim();
+    if (!/^[A-Za-z0-9-]+$/.test(trimmed)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Invalid requestId format",
+      });
+    }
+    args.push(trimmed);
+  } else {
+    args.push("--latest");
+  }
+
+  args.push("--token", OPENCLAW_GATEWAY_TOKEN);
+
+  const result = await runCmd(OPENCLAW_NODE, clawArgs(args));
+  return res
+    .status(result.code === 0 ? 200 : 500)
+    .json({ ok: result.code === 0, output: result.output });
+});
+
 app.post("/setup/api/reset", requireSetupAuth, async (_req, res) => {
   try {
     fs.rmSync(configPath(), { force: true });
@@ -1291,6 +1345,7 @@ const proxy = httpProxy.createProxyServer({
   xfwd: true,
   proxyTimeout: 120_000,
   timeout: 120_000,
+  changeOrigin: true,
 });
 
 // Prevent proxy errors from crashing the wrapper.
@@ -1313,10 +1368,12 @@ proxy.on("error", (err, _req, res) => {
 
 proxy.on("proxyReq", (proxyReq, req, res) => {
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
+  proxyReq.setHeader("Origin", GATEWAY_TARGET);
 });
 
 proxy.on("proxyReqWs", (proxyReq, req, socket, options, head) => {
   proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
+  proxyReq.setHeader("Origin", GATEWAY_TARGET);
 });
 
 // Auto-inject token into /openclaw browser GET requests so the Control UI works
@@ -1442,7 +1499,13 @@ server.on("upgrade", async (req, socket, head) => {
     socket.destroy();
     return;
   }
-  proxy.ws(req, socket, head, { target: GATEWAY_TARGET });
+  proxy.ws(req, socket, head, {
+    target: GATEWAY_TARGET,
+    headers: {
+      Authorization: `Bearer ${OPENCLAW_GATEWAY_TOKEN}`,
+      Origin: GATEWAY_TARGET,
+    },
+  });
 });
 
 async function gracefulShutdown(signal) {
