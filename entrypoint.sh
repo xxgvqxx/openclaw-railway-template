@@ -28,11 +28,17 @@ else
   fi
 fi
 
+# Fix HOME for gosu: gosu changes uid/gid but does NOT update $HOME.
+# Without this, $HOME stays as /root (from USER root in Dockerfile),
+# so os.homedir() in Node.js returns /root, and the OpenClaw gateway
+# reads config from /root/.openclaw/ instead of /home/openclaw/.openclaw/.
+# Since /root has 700 perms, the openclaw user can't access it at all.
+export HOME=/home/openclaw
+
 # Ensure OpenClaw's HOME-based config path points to the Railway volume.
-# The gateway resolves config from ~/.openclaw/openclaw.json (HOME-based),
-# NOT from OPENCLAW_STATE_DIR. Without this symlink, config patches are
-# written to /data/.openclaw/ but the gateway reads from /home/openclaw/.openclaw/.
-OPENCLAW_HOME_DIR="/home/openclaw/.openclaw"
+# The gateway resolves config from ~/.openclaw/openclaw.json (HOME-based).
+# This symlink makes ~/. openclaw/ → /data/.openclaw/ (the persistent volume).
+OPENCLAW_HOME_DIR="${HOME}/.openclaw"
 OPENCLAW_DATA_DIR="${OPENCLAW_STATE_DIR:-/data/.openclaw}"
 if [ ! -L "$OPENCLAW_HOME_DIR" ] && [ "$OPENCLAW_HOME_DIR" != "$OPENCLAW_DATA_DIR" ]; then
   mkdir -p "$(dirname "$OPENCLAW_HOME_DIR")"
@@ -41,5 +47,5 @@ if [ ! -L "$OPENCLAW_HOME_DIR" ] && [ "$OPENCLAW_HOME_DIR" != "$OPENCLAW_DATA_DI
   echo "[entrypoint] Symlinked $OPENCLAW_HOME_DIR -> $OPENCLAW_DATA_DIR" >&2
 fi
 
-echo "[entrypoint] Starting wrapper (deploy marker v4)" >&2
+echo "[entrypoint] Starting wrapper (HOME=$HOME, deploy marker v5)" >&2
 exec gosu openclaw node src/server.js
